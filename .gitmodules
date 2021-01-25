@@ -1,0 +1,21 @@
+[submodule "mapExtensor"]
+	path = mapExtensor
+	url = git@github.com:dublinbranch/mapExtensor.git
+[submodule "minMysql"]
+	path = minMysql
+	url = git@github.com:dublinbranch/minMysql.git
+[submodule "minCurl"]
+	path = minCurl
+	url = git@github.com:dublinbranch/minCurl.git
+[submodule "nanoSpammer"]
+	path = nanoSpammer
+	url = gogs@gogs.chameleon.ad:Chameleon/nanoSpammer.git
+[submodule "QStacker"]
+	path = QStacker
+	url = git@github.com:dublinbranch/QStacker.git
+[submodule "fileFunction"]
+	path = fileFunction
+	url = git@github.com:dublinbranch/fileFunction.git
+[submodule "fmt"]
+	path = fmt
+	url = gogs@gogs.chameleon.ad:Chameleon/fmt.git
