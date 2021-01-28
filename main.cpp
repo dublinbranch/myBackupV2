@@ -1,7 +1,12 @@
+#include "minMysql/min_mysql.h"
+#include "nanoSpammer/QDebugHandler.h"
+#include "nanoSpammer/config.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QProcess>
+
+DB db;
 
 class Writer1 {
       public:
@@ -53,11 +58,66 @@ class TableOpt {
 	bool    isView = false;
 };
 
+void checkForUnhandledDB() {
+	A che serve forzare una cosa che è il default ?
+
+	                                              la join serve solo per override,
+	    di default è attivo e fine
+
+	        quindi foreach di tutto quello che sta in tableBackupView,
+			
+	    fase dello                                    schema(tabelle e viste)
+	        ci si diverte a farlo                     threaded,
+			
+	    nella fase dati, essi van compressi quindi non servono i thread.
+
+	    auto res = db.query("SELECT SCHEMA_NAME FROM `dbBackupView` WHERE `id` IS NULL");
+	if (!res.empty()) {
+		qCritical().noquote() << res << R"(Are not accounted for the backup, please execute
+INSERT IGNORE, Download CSV INTO dbBackup
+SELECT 
+NULL,
+SCHEMA_NAME,
+1,
+1,
+NOW(),
+NULL
+FROM `information_schema`.`SCHEMATA` ;
+And configure if needed, in any case they will backed up even if you forget to configure them
+)";
+	}
+}
+
+std::map<QString, std::vector<TableOpt>> loadWorkSet() {
+	std::map<QString, std::vector<TableOpt>> dbPack;
+
+	auto res = db.query("SELECT * FROM dbBackupView WHERE enabled = 1 OR enabled IS NULL");
+}
+
 int main() {
+
+	NanoSpammerConfig c2;
+	c2.instanceName             = "s8";
+	c2.BRUTAL_INHUMAN_REPORTING = false;
+	c2.warningToSlack           = true;
+	c2.warningToMail            = true;
+	c2.warningMailRecipients    = {"admin@seisho.us"};
+
+	commonInitialization(&c2);
+
+	DBConf dbConf;
+	dbConf.user = "roy";
+	dbConf.pass = "roy";
+	dbConf.setDefaultDB("backupV2");
+
+	db.setConf(dbConf);
+
+	checkForUnhandledDB();
+
 	Writer1 w;
 	QDir().mkpath(w.getFolder("amarokdb"));
 
-	std::map<QString, std::vector<TableOpt>> dbPack;
+	std::map<QString, std::vector<TableOpt>> dbPack = loadWorkSet();
 
 	dbPack["amarokdb"] = {{"albums"}, {"artists"}, {"prova1", true}};
 

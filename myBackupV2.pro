@@ -33,6 +33,7 @@ CONFIG -= app_bundle
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+        config.cpp \
         main.cpp
 
 
@@ -43,3 +44,10 @@ include(minCurl/minCurl.pri)
 include(QStacker/QStacker.pri)
 include(fileFunction/fileFunction.pri)
 include(fmt/fmt.pri)
+
+DISTFILES += \
+	refillDB_table.sql \
+	schema.sql
+
+HEADERS += \
+	config.h
