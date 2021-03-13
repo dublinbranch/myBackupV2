@@ -19,3 +19,6 @@
 [submodule "fmt"]
 	path = fmt
 	url = gogs@gogs.chameleon.ad:Chameleon/fmt.git
+[submodule "magicEnum"]
+	path = magicEnum
+	url = git@github.com:dublinbranch/magicEnum.git

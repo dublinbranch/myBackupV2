@@ -1,12 +1,14 @@
 #include "minMysql/min_mysql.h"
 #include "nanoSpammer/QDebugHandler.h"
 #include "nanoSpammer/config.h"
+#include <QCommandLineParser>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
 #include <QProcess>
 
-
+using namespace std;
 /*
  * Si salva quando è stato fatto ultimo backup (ora di inizio) se è attivo e vi sono nuovi dati allora rifà un backup
  * Nel caso la frequenza è maggiore di 1, aspetta che almeno X tempo sia passato dall'ultimo backup ovvero
@@ -23,94 +25,166 @@
  * 
  * in breve stat del file (ammesso sia attivo a livello dell'os la cosa che salva il last update)
  *  -.-
- */ 
-DB db;
+ * Perché altrimenti è error prone definire una colonna da monitorare, non tutte la tabelle lo hanno ecc ecc, non tutte le tabelle sono append only e mille edge case
+ */
 
-class Writer1 {
+//TODO on the first day of the month, whatever is PRESENT, a full backup is performed ???
+DB        db;
+QString   path;
+QDateTime processStartTime = QDateTime::currentDateTime();
+
+static const QString loginBlock   = " -u roy -proy ";
+static const QString optionData   = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
+static const QString optionSchema = " --single-transaction --no-data --opt --skip-add-drop-table ";
+static const QString optionView   = " --single-transaction  --opt --skip-add-drop-table ";
+static const QString optionEvents = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
+
+class Table {
       public:
-	QString               basePath     = ".";
-	inline static QString loginBlock   = " -u roy -proy ";
-	inline static QString optionData   = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
-	inline static QString optionSchema = " --single-transaction --no-data --opt --skip-add-drop-table ";
-	inline static QString optionView   = " --single-transaction  --opt --skip-add-drop-table ";
-	inline static QString optionEvents = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
+	inline static QString basePath = ".";
 
-	QDateTime dateTime = QDateTime::currentDateTime();
+	QString schema;
+	QString name;
+	QString compressionOpt;
+	QString incremental;
+	//In case there is an error we write in the db too in the result
+	QString   error;
+	QDateTime lastUpdateTime;
+	QDateTime lastBackup;
+	QDateTime started;
+	QDateTime completed;
+	uint      frequency = 0;
+	uint      lastId    = 0;
 
-	QString getFinalName(QString db, QString table) {
+	bool isView   = false;
+	bool isInnoDb = false;
+
+	//is just easier, as not all table have id -.- as the primary column...
+	bool hasNewData() const {
+		return lastUpdateTime > lastBackup;
+	}
+
+	void annoyingJoin();
+	void innoDbLastUpdate();
+	void saveResult();
+	Table(const sqlRow& row);
+	Table(QString _schema, QString _name);
+
+	QString getFinalName() const {
 		QString finalName;
-		//2020-12-28_22-01/DB/table
-		return QString("%1/%4").arg(getFolder(db), table);
+		//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory.data.sql.gz
+		return QString("%1/%2.%3").arg(getFolder(), schema, name);
+	}
+	static QString getFolder() {
+		return QString("%1/%2/").arg(basePath, processStartTime.toString("yyyy-MM-dd_HH-mm"));
 	}
 
-	QString getFolder(QString db) {
-		return QString("%1/%2/%3").arg(basePath, dateTime.toString("yyyy-MM-dd_HH-mm"), db);
+	uint64_t getCurrentId() const {
+		if (!incremental.isEmpty()) {
+			auto sql = QSL("SELECT COALESCE(MAX(%1),0) as maxId FROM `%2`.`%3`").arg(incremental, schema, name);
+			return db.queryLine(sql).get2<uint64_t>("maxId");
+		}
+		return 0;
 	}
 
-	bool dump(QString db, QString table, QString option, QString saveBlock) {
-		saveBlock = saveBlock.arg(getFinalName(db, table));
+	void dump(QString option, QString saveBlock) {
+		saveBlock = saveBlock.arg(getFinalName());
 		QProcess sh;
-		auto     param = QString("mysqldump %1 %2 %3 %4 %5").arg(loginBlock, option, db, table, saveBlock);
-		sh.start("sh", QStringList() << "-c"
-		                             << param);
-
+		QString  where;
+		if (auto currentId = getCurrentId(); currentId) {
+			where = QSL(R"(--where="%1 > %2")").arg(incremental).arg(lastId);
+		}
+		auto param = QString("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
+		sh.start("sh", QStringList() << "-c" << param);
+		started = QDateTime::currentDateTimeUtc();
 		sh.waitForFinished(1E9);
 
-		if (auto stderr = sh.readAllStandardError(); !stderr.isEmpty()) {
-			qCritical().noquote() << stderr;
-			return false;
-		}
-
-		if (auto stdout = sh.readAllStandardOutput(); !stdout.isEmpty()) {
-			qCritical().noquote() << stderr;
-			return false;
+		error.append(sh.readAll());
+		if (!error.isEmpty()) {
+			qCritical().noquote() << error;
 		}
 		sh.close();
-		return true;
 	}
 };
 
-class TableOpt {
-      public:
-	QString name;
-	bool    isView = false;
-};
+QStringList loadDB() {
+	QStringList dbs;
+	auto        res = db.query("SELECT * FROM dbBackupView WHERE frequency > 0");
+	for (const auto& row : res) {
+		dbs.append(row["SCHEMA_NAME"]);
+	}
+	return dbs;
+}
 
-void checkForUnhandledDB() {
-	/*
-	A che serve forzare una cosa che è il default ?
-	la join serve solo per override, di default è attivo e fine ogni DB per la daily.
-	Opzione certamente più logica e a prova di errore...
-	
-	Quindi foreach di tutto quello che sta in tableBackupView,
-	    fase dello                                    schema(tabelle e viste)
-	        ci si diverte a farlo                     threaded,
-	    nella fase dati, essi van compressi quindi non servono i thread.
-*/
-	    auto res = db.query("SELECT SCHEMA_NAME FROM `dbBackupView` WHERE `id` IS NULL");
-	if (!res.empty()) {
-		qCritical().noquote() << res << R"(Are not accounted for the backup, please execute
-INSERT IGNORE, Download CSV INTO dbBackup
-SELECT 
-NULL,
-SCHEMA_NAME,
-1,
-1,
-NOW(),
-NULL
-FROM `information_schema`.`SCHEMATA` ;
-And configure if needed, in any case they will backed up even if you forget to configure them
-)";
+//Is nonsensical complex and many times slow to join at take just one row
+void Table::annoyingJoin() {
+	QString sql = R"(SELECT started,lastId FROM backupResult WHERE TABLE_SCHEMA = %1 AND TABLE_NAME = %2 ORDER BY started DESC LIMIT 1)";
+	sql         = sql.arg(base64this(schema), base64this(name));
+	auto line   = db.queryLine(sql);
+	if (line.empty()) {
+		return;
+	}
+	line.rq("started", lastBackup);
+	line.rq("lastId", lastId);
+}
+
+void Table::innoDbLastUpdate() {
+	if (isInnoDb) {
+		QString   filePath = QSL("%1/%2/%3.ibd").arg(path, schema, name);
+		QFileInfo info(filePath);
+		lastUpdateTime = info.lastModified();
 	}
 }
 
-std::map<QString, std::vector<TableOpt>> loadWorkSet() {
-	std::map<QString, std::vector<TableOpt>> dbPack;
-
-	auto res = db.query("SELECT * FROM dbBackupView WHERE enabled = 1 OR enabled IS NULL");
+Table::Table(const sqlRow& row) {
+	row.rq("TABLE_SCHEMA", schema);
+	row.rq("TABLE_NAME", name);
+	row.rq("frequency", frequency);
+	row.rq("lastUpdateTime", lastUpdateTime);
+	row.rq("compressionOpt", compressionOpt);
+	row.rq("incremental", incremental);
+	if (row["TABLE_TYPE"] == "view") {
+		isView = true;
+	}
+	if (row["ENGINE"] == "InnoDB") {
+		isInnoDb = true;
+	}
+	annoyingJoin();
+	innoDbLastUpdate();
 }
 
-int main() {
+Table::Table(QString _schema, QString _name) {
+	schema = _schema;
+	name   = _name;
+}
+
+QVector<Table> loadTables() {
+	QVector<Table> tables;
+	auto           res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0");
+	for (const auto& row : res) {
+		tables.push_back({row});
+	}
+	return tables;
+}
+
+int main(int argc, char* argv[]) {
+	QCoreApplication application(argc, argv);
+	QCoreApplication::setApplicationName("myBackupV2");
+	QCoreApplication::setApplicationVersion("2.01");
+
+	QCommandLineParser parser;
+	parser.addHelpOption();
+	parser.addVersionOption();
+	parser.addOption({{"p", "path"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
+	parser.addOption({{"t", "thread"}, "How many compression thread to spawn", "int", "4"});
+	parser.process(application);
+
+	if (!parser.isSet("path")) {
+		qWarning() << "Where is the path ?";
+		return 1;
+	} else {
+		path = parser.value("path");
+	}
 
 	NanoSpammerConfig c2;
 	c2.instanceName             = "s8";
@@ -128,24 +202,41 @@ int main() {
 
 	db.setConf(dbConf);
 
-	checkForUnhandledDB();
+	QDir().mkpath(Table::getFolder());
+	for (auto& row : loadDB()) {
+		Table temp(row, "");
+		temp.dump(optionEvents, "> %5events.sql");
+	}
 
-	Writer1 w;
-	QDir().mkpath(w.getFolder("amarokdb"));
+	auto tables = loadTables();
 
-	std::map<QString, std::vector<TableOpt>> dbPack = loadWorkSet();
-
-	dbPack["amarokdb"] = {{"albums"}, {"artists"}, {"prova1", true}};
-
-	for (auto& [db, tables] : dbPack) {
-		w.dump(db, "", w.optionEvents, "> %5events.sql");
-		for (auto& table : tables) {
-			if (table.isView) {
-				w.dump(db, table.name, w.optionView, "> %5.view.sql");
-			} else {
-				w.dump(db, table.name, w.optionData, "| gzip > %5.data.sql.gz");
-				w.dump(db, table.name, w.optionSchema, "> %5.schema.sql");
+	for (auto& table : tables) {
+		if (table.isView) {
+			table.dump(optionView, "> %5.view.sql");
+		} else {
+			if (table.hasNewData()) {
+				auto compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt());
+				table.dump(optionData, QSL("%1 > %5.data.sql.gz").arg(compress));
+				table.dump(optionSchema, "> %5.schema.sql");
+				table.saveResult();
 			}
 		}
 	}
+}
+
+void Table::saveResult() {
+	QString sql = R"(
+INSERT INTO backupResult
+SET
+	TABLE_SCHEMA = %1,
+	TABLE_NAME = %2,
+	started = '%3',
+	ended = NOW(),
+	error = %4,
+	lastId = %5
+)";
+
+	sql = sql.arg(base64this(schema), base64this(name), started.toString(mysqlDateTimeFormat), mayBeBase64(error))
+	          .arg(getCurrentId());
+	db.query(sql);
 }

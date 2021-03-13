@@ -44,6 +44,8 @@ include(minCurl/minCurl.pri)
 include(QStacker/QStacker.pri)
 include(fileFunction/fileFunction.pri)
 include(fmt/fmt.pri)
+include(magicEnum/magicEnum.pri)
+include(mapExtensor/mapExtensor.pri)
 
 DISTFILES += \
 	refillDB_table.sql \
