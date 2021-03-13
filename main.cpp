@@ -6,6 +6,24 @@
 #include <QDir>
 #include <QProcess>
 
+
+/*
+ * Si salva quando è stato fatto ultimo backup (ora di inizio) se è attivo e vi sono nuovi dati allora rifà un backup
+ * Nel caso la frequenza è maggiore di 1, aspetta che almeno X tempo sia passato dall'ultimo backup ovvero
+ * Ultimo backup 2020 01 01
+ * Freq 2
+ * Verrà fatto un backup il 2020 01 03, se ci sono nuovi dati dopo il 2020 01 01 : 00:00:00 (mezzanotte UTC)
+ * 
+ * Ovviamente per evitare approssimazioni od errori, viene presa in considerazione solo la DATA per ultimo backup e data attuale 
+ * (altrimenti se backup è partito alle 2020 01 01 e 1 minuto e il check lo faccio poi a mezzanotte esatta fallirebbe)
+ * 
+ * 
+ * Peccato che per InnoDB, sia un poco complesso (a dir poco)
+ * https://stackoverflow.com/questions/2785429/how-can-i-determine-when-an-innodb-table-was-last-changed
+ * 
+ * in breve stat del file (ammesso sia attivo a livello dell'os la cosa che salva il last update)
+ *  -.-
+ */ 
 DB db;
 
 class Writer1 {
@@ -59,18 +77,16 @@ class TableOpt {
 };
 
 void checkForUnhandledDB() {
+	/*
 	A che serve forzare una cosa che è il default ?
-
-	                                              la join serve solo per override,
-	    di default è attivo e fine
-
-	        quindi foreach di tutto quello che sta in tableBackupView,
-			
+	la join serve solo per override, di default è attivo e fine ogni DB per la daily.
+	Opzione certamente più logica e a prova di errore...
+	
+	Quindi foreach di tutto quello che sta in tableBackupView,
 	    fase dello                                    schema(tabelle e viste)
 	        ci si diverte a farlo                     threaded,
-			
 	    nella fase dati, essi van compressi quindi non servono i thread.
-
+*/
 	    auto res = db.query("SELECT SCHEMA_NAME FROM `dbBackupView` WHERE `id` IS NULL");
 	if (!res.empty()) {
 		qCritical().noquote() << res << R"(Are not accounted for the backup, please execute
