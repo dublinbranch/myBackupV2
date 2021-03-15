@@ -7,6 +7,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <thread>
+
+#include "mapExtensor/mapV2.h"
 
 using namespace std;
 /*
@@ -32,7 +35,9 @@ using namespace std;
 //So if last update < 1 month, do nothing and save time
 DB        db;
 QString   datadir;
-QDateTime processStartTime = QDateTime::currentDateTime();
+QString   backupFolder;
+QDateTime processStartTime   = QDateTime::currentDateTime();
+uint      compressionThreads = thread::hardware_concurrency() / 2;
 
 static const QString loginBlock   = " -u roy -proy ";
 static const QString optionData   = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
@@ -42,11 +47,11 @@ static const QString optionEvents = " --no-create-db --no-create-info --no-data 
 
 class Table {
       public:
-	inline static QString basePath = ".";
-
 	QString schema;
 	QString name;
+	QString compressionProg;
 	QString compressionOpt;
+	QString compressionSuffix;
 	QString incremental;
 	//In case there is an error we write in the db too in the result
 	QString   error;
@@ -60,6 +65,10 @@ class Table {
 	bool isView   = false;
 	bool isInnoDb = false;
 
+	static QString completeFolder() {
+		return backupFolder + "/complete/";
+	}
+
 	//is just easier, as not all table have id -.- as the primary column...
 	bool hasNewData() const {
 		return lastUpdateTime > lastBackup;
@@ -71,13 +80,18 @@ class Table {
 	Table(const sqlRow& row);
 	Table(QString _schema, QString _name);
 
+	QString getDbFolder() const {
+		return completeFolder() + "/" + schema;
+	}
+
 	QString getFinalName() const {
 		QString finalName;
 		//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory.data.sql.gz
-		return QString("%1/%2.%3").arg(getFolder(), schema, name);
+		return QString("%1/%2.%3").arg(getDbFolder(), schema, name);
 	}
+	//TODO per dove mettere i file in caso vi siano nuovi dati, il vecchio lo mettiamo nella cartella di quando venne fatto, il nuovo nella complete
 	static QString getFolder() {
-		return QString("%1/%2/").arg(basePath, processStartTime.toString("yyyy-MM-dd_HH-mm"));
+		return QString("%1/%2/").arg(backupFolder, processStartTime.toString("yyyy-MM-dd_HH-mm"));
 	}
 
 	uint64_t getCurrentId() const {
@@ -89,7 +103,6 @@ class Table {
 	}
 
 	void dump(QString option, QString saveBlock) {
-		saveBlock = saveBlock.arg(getFinalName());
 		QProcess sh;
 		QString  where;
 		if (auto currentId = getCurrentId(); currentId) {
@@ -100,7 +113,8 @@ class Table {
 		started = QDateTime::currentDateTimeUtc();
 		sh.waitForFinished(1E9);
 
-		error.append(sh.readAll());
+		error.append(sh.readAllStandardError());
+		error.append(sh.readAllStandardOutput());
 		if (!error.isEmpty()) {
 			qCritical().noquote() << error;
 		}
@@ -133,6 +147,10 @@ void Table::innoDbLastUpdate() {
 	if (isInnoDb) {
 		QString   filePath = QSL("%1/%2/%3.ibd").arg(datadir, schema, name);
 		QFileInfo info(filePath);
+		if (!info.exists()) {
+			//TODO explain that this program has to run as a user in the mysql group
+			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are point to the right mysql datadir folder ?").arg(filePath, schema, name));
+		}
 		lastUpdateTime = info.lastModified();
 	}
 }
@@ -142,7 +160,9 @@ Table::Table(const sqlRow& row) {
 	row.rq("TABLE_NAME", name);
 	row.rq("frequency", frequency);
 	row.rq("lastUpdateTime", lastUpdateTime);
+	row.rq("compressionProg", compressionProg);
 	row.rq("compressionOpt", compressionOpt);
+	row.rq("compressionSuffix", compressionSuffix);
 	row.rq("incremental", incremental);
 	if (row["TABLE_TYPE"] == "view") {
 		isView = true;
@@ -159,9 +179,34 @@ Table::Table(QString _schema, QString _name) {
 	name   = _name;
 }
 
+QString validSuffix(QString compress, QString suffix) {
+	static const mapV2<QString, QString> mapping{{
+	    {"xz", "xz"},
+	    {"gzip", "gz"},
+	    {"pigz", "gz"},
+	}};
+
+	if (auto v = mapping.get(compress); v) {
+		if (suffix.isEmpty()) {
+			return *v.val;
+		} else if (*v.val != suffix) {
+			throw ExceptionV2(QSL("Mismatched compression program and suffix, %1 vs %2").arg(compress, suffix));
+		} else {
+			return suffix;
+		}
+	} else {
+		if (suffix.isEmpty()) {
+			throw ExceptionV2(QSL("Unknown compression program, which suffix shall I use ?").arg(compress));
+		} else {
+			return suffix;
+		}
+	}
+}
+
 QVector<Table> loadTables() {
 	QVector<Table> tables;
-	auto           res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0");
+	db.state.get().NULL_as_EMPTY = true;
+	auto res                     = db.query("SELECT * FROM tableBackupView WHERE frequency > 0");
 	for (const auto& row : res) {
 		tables.push_back({row});
 	}
@@ -169,6 +214,8 @@ QVector<Table> loadTables() {
 }
 
 int main(int argc, char* argv[]) {
+	StackerMinLevel = "myBackupV2/";
+
 	QCoreApplication application(argc, argv);
 	QCoreApplication::setApplicationName("myBackupV2");
 	QCoreApplication::setApplicationVersion("2.01");
@@ -177,7 +224,8 @@ int main(int argc, char* argv[]) {
 	parser.addHelpOption();
 	parser.addVersionOption();
 	parser.addOption({"datadir", "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
-	parser.addOption({{"t", "thread"}, "How many compression thread to spawn", "int", "4"});
+	parser.addOption({"folder", "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
+	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
 	parser.process(application);
 
 	NanoSpammerConfig c2;
@@ -196,13 +244,34 @@ int main(int argc, char* argv[]) {
 
 	db.setConf(dbConf);
 
-	datadir = parser.require("datadir","miao");
+	//TODO verificare sia una cartella di mysql plausibile
+	datadir = parser.require("datadir");
 
-	QDir().mkpath(Table::getFolder());
-	for (auto& row : loadDB()) {
-		Table temp(row, "");
-		temp.dump(optionEvents, "> %5events.sql");
+	backupFolder       = parser.require("folder");
+	compressionThreads = parser.value("thread").toUInt();
+	if (compressionThreads == 0) {
+		throw ExceptionV2("no thread ? leave default or use 1");
+	} else if (auto maxT = thread::hardware_concurrency(); compressionThreads > maxT) {
+		throw ExceptionV2(
+		    QSL("too many thread %1, you should use at most %2 to avoid overloading (and slowing down) the machine")
+		        .arg(compressionThreads)
+		        .arg(maxT));
 	}
+
+	QDir bf(backupFolder);
+	if (bf.isRelative()) {
+		qCritical() << "Backup folder" << backupFolder << "is using a relative path, plase use an absolute one";
+		exit(1);
+	}
+	//Standard folder
+	QDir().mkpath(backupFolder);
+	QDir().mkpath(Table::completeFolder());
+
+	//	for (auto& row : loadDB()) {
+	//		Table temp(row, "");
+	//		QDir().mkpath(temp.getDbFolder());
+	//		temp.dump(optionEvents, QSL("> %5/%6.events.sql").arg(temp.getDbFolder(), temp.schema));
+	//	}
 
 	auto tables = loadTables();
 
@@ -212,14 +281,18 @@ int main(int argc, char* argv[]) {
 		} else {
 			if (table.hasNewData()) {
 				QString compress;
-				if(table.compressionOpt.isEmpty()){
-					 compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt())
-				}else{
+
+				if (table.compressionOpt.isEmpty()) {
 					compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt());
+				} else {
+					compress = QSL("| %1 %2").arg(table.compressionProg, table.compressionOpt);
 				}
-				
-				table.dump(optionData, QSL("%1 > %5.data.sql.gz").arg(compress));
-				table.dump(optionSchema, "> %5.schema.sql");
+
+				QString suffix = validSuffix(table.compressionProg, table.compressionSuffix);
+
+				auto folder = table.getFinalName();
+				table.dump(optionData, QSL("%1 > %2.data.sql.%3").arg(compress, folder, suffix));
+				table.dump(optionSchema, QSL("> %5.schema.sql").arg(folder));
 				table.saveResult();
 			}
 		}
