@@ -1,7 +1,7 @@
 #include "minMysql/min_mysql.h"
+#include "nanoSpammer/QCommandLineParserV2.h"
 #include "nanoSpammer/QDebugHandler.h"
 #include "nanoSpammer/config.h"
-#include <QCommandLineParser>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -28,9 +28,10 @@ using namespace std;
  * Perché altrimenti è error prone definire una colonna da monitorare, non tutte la tabelle lo hanno ecc ecc, non tutte le tabelle sono append only e mille edge case
  */
 
-//TODO on the first day of the month, whatever is PRESENT, a full backup is performed ???
+//TODO on the first day of the month, whatever is PRESENT, a full backup is performed ??? (if there are new data of course)
+//So if last update < 1 month, do nothing and save time
 DB        db;
-QString   path;
+QString   datadir;
 QDateTime processStartTime = QDateTime::currentDateTime();
 
 static const QString loginBlock   = " -u roy -proy ";
@@ -130,7 +131,7 @@ void Table::annoyingJoin() {
 
 void Table::innoDbLastUpdate() {
 	if (isInnoDb) {
-		QString   filePath = QSL("%1/%2/%3.ibd").arg(path, schema, name);
+		QString   filePath = QSL("%1/%2/%3.ibd").arg(datadir, schema, name);
 		QFileInfo info(filePath);
 		lastUpdateTime = info.lastModified();
 	}
@@ -172,24 +173,17 @@ int main(int argc, char* argv[]) {
 	QCoreApplication::setApplicationName("myBackupV2");
 	QCoreApplication::setApplicationVersion("2.01");
 
-	QCommandLineParser parser;
+	QCommandLineParserV2 parser;
 	parser.addHelpOption();
 	parser.addVersionOption();
-	parser.addOption({{"p", "path"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
+	parser.addOption({"datadir", "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
 	parser.addOption({{"t", "thread"}, "How many compression thread to spawn", "int", "4"});
 	parser.process(application);
-
-	if (!parser.isSet("path")) {
-		qWarning() << "Where is the path ?";
-		return 1;
-	} else {
-		path = parser.value("path");
-	}
 
 	NanoSpammerConfig c2;
 	c2.instanceName             = "s8";
 	c2.BRUTAL_INHUMAN_REPORTING = false;
-	c2.warningToSlack           = true;
+	c2.warningToSlack           = false;
 	c2.warningToMail            = true;
 	c2.warningMailRecipients    = {"admin@seisho.us"};
 
@@ -201,6 +195,8 @@ int main(int argc, char* argv[]) {
 	dbConf.setDefaultDB("backupV2");
 
 	db.setConf(dbConf);
+
+	datadir = parser.require("datadir","miao");
 
 	QDir().mkpath(Table::getFolder());
 	for (auto& row : loadDB()) {
@@ -215,7 +211,13 @@ int main(int argc, char* argv[]) {
 			table.dump(optionView, "> %5.view.sql");
 		} else {
 			if (table.hasNewData()) {
-				auto compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt());
+				QString compress;
+				if(table.compressionOpt.isEmpty()){
+					 compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt())
+				}else{
+					compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt());
+				}
+				
 				table.dump(optionData, QSL("%1 > %5.data.sql.gz").arg(compress));
 				table.dump(optionSchema, "> %5.schema.sql");
 				table.saveResult();
