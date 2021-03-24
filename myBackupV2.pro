@@ -34,7 +34,8 @@ CONFIG -= app_bundle
 
 SOURCES += \
         config.cpp \
-        main.cpp
+        main.cpp \
+        table.cpp
 
 
 
@@ -52,4 +53,6 @@ DISTFILES += \
 	schema.sql
 
 HEADERS += \
-	config.h
+	config.h \
+	const.h \
+	table.h

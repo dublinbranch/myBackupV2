@@ -1,9 +1,11 @@
+#include "const.h"
 #include "fileFunction/folder.h"
 #include "mapExtensor/mapV2.h"
 #include "minMysql/min_mysql.h"
 #include "nanoSpammer/QCommandLineParserV2.h"
 #include "nanoSpammer/QDebugHandler.h"
 #include "nanoSpammer/config.h"
+#include "table.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -39,74 +41,6 @@ QString   backupFolder;
 QDateTime processStartTime   = QDateTime::currentDateTime();
 uint      compressionThreads = thread::hardware_concurrency() / 2;
 
-const QString        folderTimeFormat = "yyyy-MM-dd_HH-mm";
-static const QString loginBlock       = " -u roy -proy ";
-static const QString optionData       = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
-static const QString optionSchema     = " --single-transaction --no-data --opt --skip-add-drop-table ";
-static const QString optionView       = " --single-transaction  --opt --skip-add-drop-table ";
-static const QString optionEvents     = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
-
-class Table {
-      public:
-	QString schema;
-	QString name;
-	QString compressionProg;
-	QString compressionOpt;
-	QString compressionSuffix;
-	QString incremental;
-	//InnoDB uses an unknown encoding scheme for non ASCII table name, so we force the path
-	QString path;
-	//In case there is an error we write in the db too in the result
-	QString   error;
-	QDateTime lastUpdateTime;
-	QDateTime lastBackup;
-	QDateTime started;
-	QDateTime completed;
-	uint      frequency = 0;
-	uint      lastId    = 0;
-
-	bool isView   = false;
-	bool isInnoDb = false;
-
-	//This is the folder where we ALWAYS store the current up to date data
-	static QString completeFolder();
-
-	bool isIncremental() const;
-
-	//A folder used to store what we are doing today, and simlink stuff to current when needed
-	static QString dailyBackupFolder();
-
-	//If the table is NOT PROGRESSIVE, we archive the old data
-	void archiveOldData();
-	//For this table, when the last backup was performed, used to move the old data from completedFolder before updating it
-	QString lastBackupFolder() const;
-
-	//is just easier, as not all table have id -.- as the primary column...
-	bool hasNewData() const;
-
-	/**
-	 * @brief moveOld will move an old backup in a folder named according with the backup date, and remove the symlink
-	 * @return 
-	 */
-	bool moveOld();
-	void annoyingJoin();
-	void innoDbLastUpdate();
-	void saveResult() const;
-	Table(const sqlRow& row);
-	Table(QString _schema, QString _name);
-
-	QString getDbFolder() const;
-
-	QString getFinalName() const;
-	//TODO per dove mettere i file in caso vi siano nuovi dati, il vecchio lo mettiamo nella cartella di quando venne fatto, il nuovo nella complete
-
-	static QString getFolder();
-
-	uint64_t getCurrentId() const;
-
-	void dump(QString option, QString saveBlock);
-};
-
 QStringList loadDB() {
 	QStringList dbs;
 	auto        res = db.query("SELECT * FROM dbBackupView WHERE frequency > 0");
@@ -114,153 +48,6 @@ QStringList loadDB() {
 		dbs.append(row["SCHEMA_NAME"]);
 	}
 	return dbs;
-}
-
-QString Table::completeFolder() {
-	return backupFolder + "/complete/";
-}
-
-bool Table::isIncremental() const {
-	return !incremental.isEmpty();
-}
-
-QString Table::dailyBackupFolder() {
-	return backupFolder + "/complete/";
-}
-
-void Table::archiveOldData() {
-	if (!isIncremental()) {
-		return;
-	}
-}
-
-QString Table::lastBackupFolder() const {
-	return backupFolder + "/" + lastBackup.toString(folderTimeFormat);
-}
-
-bool Table::hasNewData() const {
-	return lastUpdateTime > lastBackup;
-}
-
-bool Table::moveOld() {
-}
-
-void Table::annoyingJoin() {
-	QString sql = R"(SELECT started,lastId FROM backupResult WHERE TABLE_SCHEMA = %1 AND TABLE_NAME = %2 AND error IS NULL ORDER BY started DESC LIMIT 1)";
-	sql         = sql.arg(base64this(schema), base64this(name));
-	auto line   = db.queryLine(sql);
-	if (line.empty()) {
-		return;
-	}
-	line.rq("started", lastBackup);
-	line.rq("lastId", lastId);
-}
-
-void Table::innoDbLastUpdate() {
-	if (isInnoDb) {
-		QString ibdPath;
-		if (path.isEmpty()) {
-			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, name);
-		} else {
-			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, path);
-		}
-
-		QFileInfo info(ibdPath);
-		if (!info.exists()) {
-			//TODO explain that this program has to run as a user in the mysql group
-			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are pointing to the right mysql datadir folder ?").arg(ibdPath, schema, name));
-		}
-		lastUpdateTime = info.lastModified();
-	}
-}
-
-Table::Table(const sqlRow& row) {
-	row.rq("TABLE_SCHEMA", schema);
-	row.rq("TABLE_NAME", name);
-	row.rq("frequency", frequency);
-	row.rq("lastUpdateTime", lastUpdateTime);
-	row.rq("compressionProg", compressionProg);
-	row.rq("compressionOpt", compressionOpt);
-	row.rq("compressionSuffix", compressionSuffix);
-	row.rq("incremental", incremental);
-	if (row["TABLE_TYPE"] == "view") {
-		isView = true;
-	}
-	if (row["ENGINE"] == "InnoDB") {
-		isInnoDb = true;
-	}
-	annoyingJoin();
-	innoDbLastUpdate();
-}
-
-Table::Table(QString _schema, QString _name) {
-	schema = _schema;
-	name   = _name;
-}
-
-QString Table::getDbFolder() const {
-	return completeFolder() + "/" + schema;
-}
-
-QString Table::getFinalName() const {
-	QString finalName;
-	//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory.data.sql.gz
-	return QString("%1/%2.%3").arg(getDbFolder(), schema, name);
-}
-
-QString Table::getFolder() {
-	return QString("%1/%2/").arg(backupFolder, processStartTime.toString("yyyy-MM-dd_HH-mm"));
-}
-
-uint64_t Table::getCurrentId() const {
-	if (!incremental.isEmpty()) {
-		auto sql = QSL("SELECT COALESCE(MAX(%1),0) as maxId FROM `%2`.`%3`").arg(incremental, schema, name);
-		return db.queryLine(sql).get2<uint64_t>("maxId");
-	}
-	return 0;
-}
-
-void Table::dump(QString option, QString saveBlock) {
-	QProcess sh;
-	QString  where;
-	if (auto currentId = getCurrentId(); currentId) {
-		where = QSL(R"(--where="%1 > %2")").arg(incremental).arg(lastId);
-	}
-	auto param = QString("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
-	sh.start("sh", QStringList() << "-c" << param);
-	started = QDateTime::currentDateTimeUtc();
-	sh.waitForFinished(1E9);
-
-	error.append(sh.readAllStandardError());
-	error.append(sh.readAllStandardOutput());
-	if (!error.isEmpty()) {
-		qCritical().noquote() << error;
-	}
-	sh.close();
-}
-
-QString validSuffix(QString compress, QString suffix) {
-	static const mapV2<QString, QString> mapping{{
-	    {"xz", "xz"},
-	    {"gzip", "gz"},
-	    {"pigz", "gz"},
-	}};
-
-	if (auto v = mapping.get(compress); v) {
-		if (suffix.isEmpty()) {
-			return *v.val;
-		} else if (*v.val != suffix) {
-			throw ExceptionV2(QSL("Mismatched compression program and suffix, %1 vs %2").arg(compress, suffix));
-		} else {
-			return suffix;
-		}
-	} else {
-		if (suffix.isEmpty()) {
-			throw ExceptionV2(QSL("Unknown compression program, which suffix shall I use ?").arg(compress));
-		} else {
-			return suffix;
-		}
-	}
 }
 
 QVector<Table> loadTables() {
@@ -327,56 +114,55 @@ int main(int argc, char* argv[]) {
 	//Standard folder
 	QDir().mkpath(backupFolder);
 	QDir().mkpath(Table::completeFolder());
-	QDir().mkpath(Table::dailyBackupFolder());
+	QDir().mkpath(Table::currentFolder());
 
 	for (auto& row : loadDB()) {
 		Table temp(row, "");
-		QDir().mkpath(temp.getDbFolder());
-		temp.dump(optionEvents, QSL("> %5/%6.events.sql").arg(temp.getDbFolder(), temp.schema));
+		mkdir(temp.getDbFolder(Table::currentFolder()));
+		mkdir(temp.getDbFolder(Table::completeFolder()));
+
+		auto currentPath  = QSL("> %5/%6.events.sql").arg(Table::currentFolder(), temp.schema);
+		auto completePath = QSL("> %5/%6.events.sql").arg(Table::completeFolder(), temp.schema);
+		temp.dump(optionEvents, currentPath);
+		temp.dump(optionEvents, completePath);
 	}
 
 	auto tables = loadTables();
 
 	for (auto& table : tables) {
+
+		auto currentPath  = table.getPath(Table::currentFolder());
+		auto completePath = table.getPath(Table::completeFolder());
+
 		if (table.isView) {
 			//View take 0 space, so we store both in the complete folder and in the daily one
-			table.dump(optionView, "> %5.view.sql");
+			table.dump(optionView, QSL("> %5.view.sql").arg(currentPath));
+			table.dump(optionView, QSL("> %5.view.sql").arg(completePath));
 		} else {
-			if (table.hasNewData()) {
-				QString compress;
-				QString suffix;
-				if (table.compressionProg.isEmpty()) {
-					compress = QSL("| pigz -p %1").arg(parser.value("thread").toUInt());
-					suffix   = "gz";
-				} else {
-					compress = QSL("| %1 %2").arg(table.compressionProg, table.compressionOpt);
-					suffix   = validSuffix(table.compressionProg, table.compressionSuffix);
-				}
+			//schema takes 0 space so is useless to save time and space here, just make a copy on both folder
+			table.dump(optionSchema, QSL("> %5.schema.sql").arg(currentPath));
+			table.dump(optionSchema, QSL("> %5.schema.sql").arg(completePath));
 
-				auto folder = table.getFinalName();
+			if (table.hasNewData()) {
+
 				//Move the old backup in a folder with the date of the old backup
 				table.moveOld();
-				table.dump(optionData, QSL("%1 > %2.data.sql.%3").arg(compress, folder, suffix));
-				table.dump(optionSchema, QSL("> %5.schema.sql").arg(folder));
+				{
+					auto fileName = QSL("%2.data.sql.%3").arg(completePath, table.suffix());
+					auto command  = QSL("%1 > %2").arg(table.compress(), fileName);
+					table.dump(optionData, command, true);
+					//this will create the symlink
+					if(table.hasMultipleFile()){
+						
+					}
+					QFile(fileName).link(currentPath + ".data.sql." + table.suffix());
+				}
 				table.saveResult();
+			} else {
+				//just create the symlink
+				auto fileName = QSL("%2.data.sql.%3").arg(completePath, table.suffix());
+				QFile(fileName).link(currentPath + ".data.sql." + table.suffix());
 			}
 		}
 	}
-}
-
-void Table::saveResult() const {
-	QString sql = R"(
-INSERT INTO backupResult
-SET
-	TABLE_SCHEMA = %1,
-	TABLE_NAME = %2,
-	started = '%3',
-	ended = NOW(),
-	error = %4,
-	lastId = %5
-)";
-
-	sql = sql.arg(base64this(schema), base64this(name), started.toString(mysqlDateTimeFormat), mayBeBase64(error, true))
-	          .arg(getCurrentId());
-	db.query(sql);
 }
