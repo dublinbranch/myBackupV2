@@ -1,3 +1,5 @@
+#include "fileFunction/folder.h"
+#include "mapExtensor/mapV2.h"
 #include "minMysql/min_mysql.h"
 #include "nanoSpammer/QCommandLineParserV2.h"
 #include "nanoSpammer/QDebugHandler.h"
@@ -8,8 +10,6 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <thread>
-
-#include "mapExtensor/mapV2.h"
 
 using namespace std;
 /*
@@ -39,11 +39,12 @@ QString   backupFolder;
 QDateTime processStartTime   = QDateTime::currentDateTime();
 uint      compressionThreads = thread::hardware_concurrency() / 2;
 
-static const QString loginBlock   = " -u roy -proy ";
-static const QString optionData   = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
-static const QString optionSchema = " --single-transaction --no-data --opt --skip-add-drop-table ";
-static const QString optionView   = " --single-transaction  --opt --skip-add-drop-table ";
-static const QString optionEvents = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
+const QString        folderTimeFormat = "yyyy-MM-dd_HH-mm";
+static const QString loginBlock       = " -u roy -proy ";
+static const QString optionData       = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
+static const QString optionSchema     = " --single-transaction --no-data --opt --skip-add-drop-table ";
+static const QString optionView       = " --single-transaction  --opt --skip-add-drop-table ";
+static const QString optionEvents     = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
 
 class Table {
       public:
@@ -67,7 +68,18 @@ class Table {
 	bool isView   = false;
 	bool isInnoDb = false;
 
+	//This is the folder where we ALWAYS store the current up to date data
 	static QString completeFolder();
+
+	bool isIncremental() const;
+
+	//A folder used to store what we are doing today, and simlink stuff to current when needed
+	static QString dailyBackupFolder();
+
+	//If the table is NOT PROGRESSIVE, we archive the old data
+	void archiveOldData();
+	//For this table, when the last backup was performed, used to move the old data from completedFolder before updating it
+	QString lastBackupFolder() const;
 
 	//is just easier, as not all table have id -.- as the primary column...
 	bool hasNewData() const;
@@ -87,6 +99,7 @@ class Table {
 
 	QString getFinalName() const;
 	//TODO per dove mettere i file in caso vi siano nuovi dati, il vecchio lo mettiamo nella cartella di quando venne fatto, il nuovo nella complete
+
 	static QString getFolder();
 
 	uint64_t getCurrentId() const;
@@ -103,13 +116,33 @@ QStringList loadDB() {
 	return dbs;
 }
 
-//Is nonsensical complex and many times slow to join at take just one row
 QString Table::completeFolder() {
 	return backupFolder + "/complete/";
 }
 
+bool Table::isIncremental() const {
+	return !incremental.isEmpty();
+}
+
+QString Table::dailyBackupFolder() {
+	return backupFolder + "/complete/";
+}
+
+void Table::archiveOldData() {
+	if (!isIncremental()) {
+		return;
+	}
+}
+
+QString Table::lastBackupFolder() const {
+	return backupFolder + "/" + lastBackup.toString(folderTimeFormat);
+}
+
 bool Table::hasNewData() const {
 	return lastUpdateTime > lastBackup;
+}
+
+bool Table::moveOld() {
 }
 
 void Table::annoyingJoin() {
@@ -135,7 +168,7 @@ void Table::innoDbLastUpdate() {
 		QFileInfo info(ibdPath);
 		if (!info.exists()) {
 			//TODO explain that this program has to run as a user in the mysql group
-			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are point to the right mysql datadir folder ?").arg(ibdPath, schema, name));
+			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are pointing to the right mysql datadir folder ?").arg(ibdPath, schema, name));
 		}
 		lastUpdateTime = info.lastModified();
 	}
@@ -197,7 +230,7 @@ void Table::dump(QString option, QString saveBlock) {
 	sh.start("sh", QStringList() << "-c" << param);
 	started = QDateTime::currentDateTimeUtc();
 	sh.waitForFinished(1E9);
-	
+
 	error.append(sh.readAllStandardError());
 	error.append(sh.readAllStandardOutput());
 	if (!error.isEmpty()) {
@@ -208,11 +241,11 @@ void Table::dump(QString option, QString saveBlock) {
 
 QString validSuffix(QString compress, QString suffix) {
 	static const mapV2<QString, QString> mapping{{
-			{"xz", "xz"},
-			{"gzip", "gz"},
-			{"pigz", "gz"},
-												 }};
-	
+	    {"xz", "xz"},
+	    {"gzip", "gz"},
+	    {"pigz", "gz"},
+	}};
+
 	if (auto v = mapping.get(compress); v) {
 		if (suffix.isEmpty()) {
 			return *v.val;
@@ -251,8 +284,8 @@ int main(int argc, char* argv[]) {
 	QCommandLineParserV2 parser;
 	parser.addHelpOption();
 	parser.addVersionOption();
-	parser.addOption({"datadir", "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
-	parser.addOption({"folder", "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
+	parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
+	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
 	parser.process(application);
 
@@ -294,6 +327,7 @@ int main(int argc, char* argv[]) {
 	//Standard folder
 	QDir().mkpath(backupFolder);
 	QDir().mkpath(Table::completeFolder());
+	QDir().mkpath(Table::dailyBackupFolder());
 
 	for (auto& row : loadDB()) {
 		Table temp(row, "");
@@ -305,6 +339,7 @@ int main(int argc, char* argv[]) {
 
 	for (auto& table : tables) {
 		if (table.isView) {
+			//View take 0 space, so we store both in the complete folder and in the daily one
 			table.dump(optionView, "> %5.view.sql");
 		} else {
 			if (table.hasNewData()) {
