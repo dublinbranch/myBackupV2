@@ -1,4 +1,5 @@
 #include "const.h"
+#include "fileFunction/filefunction.h"
 #include "fileFunction/folder.h"
 #include "mapExtensor/mapV2.h"
 #include "minMysql/min_mysql.h"
@@ -54,7 +55,7 @@ QVector<Table> loadTables() {
 	QVector<Table> tables;
 	db.state.get().NULL_as_EMPTY = true;
 	//Just easier to load in two stages than doig a join on the last row of backupResult
-	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0");
+	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0 AND TABLE_NAME = 'general_log' ");
 	for (const auto& row : res) {
 		tables.push_back({row});
 	}
@@ -130,38 +131,34 @@ int main(int argc, char* argv[]) {
 	auto tables = loadTables();
 
 	for (auto& table : tables) {
-
-		auto currentPath  = table.getPath(Table::currentFolder());
-		auto completePath = table.getPath(Table::completeFolder());
-
 		if (table.isView) {
 			//View take 0 space, so we store both in the complete folder and in the daily one
-			table.dump(optionView, QSL("> %5.view.sql").arg(currentPath));
-			table.dump(optionView, QSL("> %5.view.sql").arg(completePath));
+			table.dump(optionView, " > " + table.getPath(Table::currentFolder(), FType::view));
+			table.dump(optionView, " > " + table.getPath(Table::completeFolder(), FType::view));
 		} else {
 			//schema takes 0 space so is useless to save time and space here, just make a copy on both folder
-			table.dump(optionSchema, QSL("> %5.schema.sql").arg(currentPath));
-			table.dump(optionSchema, QSL("> %5.schema.sql").arg(completePath));
+			table.dump(optionSchema, " > " + table.getPath(Table::currentFolder(), FType::schema));
+			table.dump(optionSchema, " > " + table.getPath(Table::completeFolder(), FType::schema));
 
 			if (table.hasNewData()) {
-
+				qDebug() << table.schema << table.name << "has new data";
 				//Move the old backup in a folder with the date of the old backup
 				table.moveOld();
 				{
-					auto fileName = QSL("%2.data.sql.%3").arg(completePath, table.suffix());
-					auto command  = QSL("%1 > %2").arg(table.compress(), fileName);
+					auto fileName = table.getPath(Table::completeFolder(), FType::data);
+					auto command  = QSL(" %1 > %2").arg(table.compress(), fileName);
 					table.dump(optionData, command, true);
 					//this will create the symlink
-					if(table.hasMultipleFile()){
-						
-					}
-					QFile(fileName).link(currentPath + ".data.sql." + table.suffix());
+
+					auto dest = table.getPath(Table::currentFolder(), FType::data);
+					hardlink(fileName, dest);
 				}
 				table.saveResult();
 			} else {
-				//just create the symlink
-				auto fileName = QSL("%2.data.sql.%3").arg(completePath, table.suffix());
-				QFile(fileName).link(currentPath + ".data.sql." + table.suffix());
+				//just create the symlink if the source exists (maybe there are not data at all ?
+				auto source = table.getPath(Table::completeFolder(), FType::data);
+				auto dest   = table.getPath(Table::currentFolder(), FType::data);
+				hardlink(source, dest, false);
 			}
 		}
 	}

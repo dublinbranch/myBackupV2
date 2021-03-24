@@ -5,16 +5,24 @@
 #include <QString>
 
 class sqlRow;
+
+enum class FType {
+	view,
+	schema,
+	data
+};
+
 class Table {
       public:
 	QString schema;
 	QString name;
 	QString incremental;
-	QString fractionated;
+	bool    incrementalOn = false;
 	//InnoDB uses an unknown encoding scheme for non ASCII table name, so we force the path
 	QString path;
 	//In case there is an error we write in the db too in the result
 	QString   error;
+	QString   lastBackupFolder;
 	QDateTime lastUpdateTime;
 	QDateTime lastBackup;
 	QDateTime started;
@@ -27,7 +35,7 @@ class Table {
 	bool isInnoDb = false;
 
 	bool isIncremental() const;
-
+	bool isFractionated() const;
 	//is just easier, as not all table have id -.- as the primary column...
 	bool hasNewData() const;
 
@@ -44,18 +52,18 @@ class Table {
 
 	QString getDbFolder(QString folder) const;
 
-	QString getPath(QString folder) const;
+	QString getPath(QString folder, FType type, bool noSuffix = false) const;
 
 	//This is the folder where we ALWAYS store the current up to date data
 	static QString completeFolder();
 	//The folder for storing symlink of the current execution
 	static QString currentFolder();
 	//For this table, when the last backup was performed, used to move the old data from completedFolder before updating it
-	QString lastBackupFolder() const;
+	QString getLastBackupFolder() const;
 
 	uint64_t getCurrentMax() const;
 	bool     hasMultipleFile() const;
-	void     dump(const QString &option, QString saveBlock, bool dataDump = false);
+	void     dump(const QString& option, QString saveBlock, bool dataDump = false);
 
 	QString compress() const;
 	QString suffix() const;

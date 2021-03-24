@@ -1,9 +1,12 @@
 #include "table.h"
 #include "const.h"
+#include "fileFunction/filefunction.h"
 #include "fileFunction/folder.h"
+#include "magicEnum/magic_from_string.hpp"
 #include "mapExtensor/mapV2.h"
 #include "minMysql/min_mysql.h"
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QProcess>
 
@@ -18,16 +21,23 @@ QString Table::completeFolder() {
 }
 
 bool Table::isIncremental() const {
-	return !incremental.isEmpty();
+	return incrementalOn;
 }
 
-QString Table::lastBackupFolder() const {
-	return backupFolder + "/" + lastBackup.toString(folderTimeFormat);
+bool Table::isFractionated() const {
+	return fractionSize;
+}
+
+QString Table::getLastBackupFolder() const {
+	return lastBackupFolder;
 }
 
 bool Table::hasNewData() const {
 	//we do not really need to check the id in case of progressive...
-	return lastUpdateTime > lastBackup;
+	if (lastUpdateTime.isValid()) {
+		return lastUpdateTime > lastBackup;
+	}
+	return true;
 }
 
 bool Table::moveOld() {
@@ -35,43 +45,61 @@ bool Table::moveOld() {
 		return true;
 	}
 
+	if (!lastBackup.isValid()) { //no previous backup
+		return true;
+	}
 	//we only move the data, schema is NOT a symlink
 
 	//file that contain the old symlink, to be removed
-	auto lastPrefix = getPath(lastBackupFolder()) + ".data.sql.";
 	{
-		auto lastPattern = lastPrefix + "*";
-		auto last        = search(lastPattern);
-		erase(last);
+		auto last = getPath(getLastBackupFolder(), FType::data, true);
+		if (isFractionated()) {
+			QFile(last).remove();
+		} else {
+			auto files = search(last + "*");
+			erase(files);
+		}
 	}
 
 	//now move the current "old" data to the old table (before overwriting it with the new one)
-	auto completePrefix  = getPath(completeFolder()) + ".data.sql.";
-	auto completePattern = completePrefix + "*";
-	auto complete        = search(completePattern);
-	switch (complete.size()) {
-	case 1:
-		break;
-	case 0:
-		//This should be an error ?
-		return false;
-	default:
 
-		qCritical() << "multiple files found for " << completePattern << "they are" << complete << "please remove/fix them";
-		return false;
-	}
+	auto complete = getPath(completeFolder(), FType::data, true);
 
-	auto  s = QFileInfo(complete[0]).suffix();
-	QFile file(completePrefix + s);
-	if (!file.rename(lastPrefix + s)) {
-		//In case the old folder got already delete the rename will fail, so just remove the file
-		file.remove();
+	if (isFractionated()) {
+		auto last = getPath(getLastBackupFolder(), FType::data, true);
+		hardlink(complete, last);
+	} else {
+		auto completePattern = complete + "*";
+		auto completeList    = search(completePattern);
+		switch (completeList.size()) {
+		case 1: {
+			//All this is if we change compression format midfly -.-
+			QFile     file(completeList[0]);
+			QFileInfo neu(file);
+			QFileInfo old(getPath(getLastBackupFolder(), FType::data, true));
+			QString   newName = old.path() + "/" + old.completeBaseName() + "." + neu.suffix();
+
+			//annoyng problem of changin compression on the fly
+			auto msg = hardlink(completeList[0], newName, true);
+			if (!msg.isEmpty()) {
+				//In case the old folder got already delete the rename will fail, so just remove the file
+				file.remove();
+			}
+			return true;
+		}
+		case 0:
+			//This should be an error ?
+			return false;
+		default:
+			qCritical() << "multiple files found for " << completePattern << "they are" << completeList << "please remove/fix them";
+			return false;
+		}
 	}
 	return true;
 }
 
 void Table::annoyingJoin() {
-	QString sql = R"(SELECT started,lastId FROM backupResult WHERE TABLE_SCHEMA = %1 AND TABLE_NAME = %2 AND error IS NULL ORDER BY started DESC LIMIT 1)";
+	QString sql = R"(SELECT started,lastId,folder FROM backupResult WHERE TABLE_SCHEMA = %1 AND TABLE_NAME = %2 AND error IS NULL ORDER BY started DESC LIMIT 1)";
 	sql         = sql.arg(base64this(schema), base64this(name));
 	auto line   = db.queryLine(sql);
 	if (line.empty()) {
@@ -79,6 +107,7 @@ void Table::annoyingJoin() {
 	}
 	line.rq("started", lastBackup);
 	line.rq("lastId", lastId);
+	line.rq("folder", lastBackupFolder);
 }
 
 void Table::innoDbLastUpdate() {
@@ -103,13 +132,14 @@ Table::Table(const sqlRow& row) {
 	row.rq("TABLE_SCHEMA", schema);
 	row.rq("TABLE_NAME", name);
 	row.rq("frequency", frequency);
-	row.rq("fractionated", fractionated);
 	row.rq("fractionSize", fractionSize);
 	row.rq("lastUpdateTime", lastUpdateTime);
 	row.rq("compressionProg", compressionProg);
 	row.rq("compressionOpt", compressionOpt);
 	row.rq("compressionSuffix", compressionSuffix);
 	row.rq("incremental", incremental);
+	row.rq("incrementalOn", incrementalOn);
+
 	if (row["TABLE_TYPE"] == "view") {
 		isView = true;
 	}
@@ -129,9 +159,29 @@ QString Table::getDbFolder(QString folder) const {
 	return folder + "/" + schema;
 }
 
-QString Table::getPath(QString folder) const {
-	//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory.data.sql.gz
-	return QString("%1/%2/%3.%4").arg(folder, schema, schema, name);
+QString Table::getPath(QString folder, FType type, bool noSuffix) const {
+	auto base = QString("%1/%2/%3.%4").arg(folder, schema, schema, name);
+	//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory  .data.sql.gz
+	switch (type) {
+	case FType::data: {
+		if (isFractionated()) {
+			return base;
+		}
+		base.append(".data.sql");
+		if (noSuffix) {
+			return base;
+		}
+		return base + "." + suffix();
+	}
+
+	case FType::schema: {
+		return base + ".schema.sql";
+	}
+
+	case FType::view: {
+		return base + ".view.sql";
+	}
+	}
 }
 
 QString Table::currentFolder() {
@@ -147,7 +197,7 @@ uint64_t Table::getCurrentMax() const {
 }
 
 bool Table::hasMultipleFile() const {
-	return !incremental.isEmpty() || !fractionated.isEmpty();
+	return isIncremental() || isFractionated();
 }
 
 void Table::dump(const QString& option, QString saveBlock, bool dataDump) {
@@ -160,31 +210,33 @@ void Table::dump(const QString& option, QString saveBlock, bool dataDump) {
 		currentMax = getCurrentMax();
 	}
 
-	if (!fractionated.isEmpty()) {
-		inProgressIdStart = lastId;
+	if (isFractionated()) {
+		if (isIncremental()) {
+			inProgressIdStart = lastId;
+		} else {
+			inProgressIdStart = 0;
+		}
 	}
 
-	auto completePath = getPath(Table::completeFolder());
+	auto completePath = getPath(Table::completeFolder(), FType::data, true);
 	if (currentMax) {
 		mkdir(completePath);
 	}
 	while (true) {
-		if (!fractionated.isEmpty()) {
-			inProgressIdEnd = std::max(inProgressIdStart + fractionSize, currentMax);
+		if (dataDump && isFractionated()) {
+			inProgressIdEnd = std::min(inProgressIdStart + fractionSize, currentMax);
 			where           = QSL(R"(--where="%1 > %2 AND %1 <= %3 ")").arg(incremental).arg(inProgressIdStart).arg(inProgressIdEnd);
-
-			auto fileName = QSL("%2/data_%4_%5.sql.%3").arg(completePath, suffix()).arg(inProgressIdStart).arg(inProgressIdEnd);
-			saveBlock     = QSL("%1 > %2").arg(compress(), fileName);
+			auto fileName   = QSL("%2/%3_%4_%5.%6").arg(completePath, name).arg(inProgressIdStart).arg(inProgressIdEnd).arg(suffix());
+			saveBlock       = QSL("%1 > %2").arg(compress(), fileName);
 		} else {
 			if (currentMax) {
-
 				where         = QSL(R"(--where="%1 > %2 AND %1 <= %3 ")").arg(incremental).arg(lastId).arg(currentMax);
-				auto fileName = QSL("%2/data_%4_%5.sql.%3").arg(completePath, suffix()).arg(lastId).arg(currentMax);
+				auto fileName = QSL("%2/%3_%4_%5.%6").arg(completePath, name).arg(lastId).arg(currentMax).arg(suffix());
 				saveBlock     = QSL("%1 > %2").arg(compress(), fileName);
 			}
 		}
 
-		auto param = QString("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
+		QString param = QSL("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
 		sh.start("sh", QStringList() << "-c" << param);
 		started = QDateTime::currentDateTimeUtc();
 		sh.waitForFinished(1E9);
@@ -199,12 +251,14 @@ void Table::dump(const QString& option, QString saveBlock, bool dataDump) {
 		if (!dataDump) {
 			return;
 		}
-		if (fractionated.isEmpty()) {
-			return;
-		} else if (inProgressIdEnd >= currentMax) {
-			return;
+		if (isFractionated()) {
+			if (inProgressIdEnd >= currentMax) {
+				return;
+			} else {
+				inProgressIdStart = inProgressIdEnd;
+			}
 		} else {
-			inProgressIdStart = inProgressIdEnd;
+			return;
 		}
 	}
 }
@@ -258,11 +312,13 @@ SET
 	started = '%3',
 	error = %4,
 	lastId = %5,
-	ended = '%6'
+	ended = '%6',
+	folder = %7
 )";
 
 	sql = sql.arg(base64this(schema), base64this(name), started.toString(mysqlDateTimeFormat), mayBeBase64(error, true))
 	          .arg(getCurrentMax())
-	          .arg(completed.toString(mysqlDateTimeFormat));
+	          .arg(completed.toString(mysqlDateTimeFormat))
+	          .arg(base64this(currentFolder()));
 	db.query(sql);
 }
