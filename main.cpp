@@ -55,7 +55,7 @@ QVector<Table> loadTables() {
 	QVector<Table> tables;
 	db.state.get().NULL_as_EMPTY = true;
 	//Just easier to load in two stages than doig a join on the last row of backupResult
-	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0 AND TABLE_NAME = 'general_log' ");
+	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0 AND TABLE_NAME = 'backupResult' ");
 	for (const auto& row : res) {
 		tables.push_back({row});
 	}
@@ -142,23 +142,24 @@ int main(int argc, char* argv[]) {
 
 			if (table.hasNewData()) {
 				qDebug() << table.schema << table.name << "has new data";
-				//Move the old backup in a folder with the date of the old backup
-				table.moveOld();
 				{
-					auto fileName = table.getPath(Table::completeFolder(), FType::data);
-					auto command  = QSL(" %1 > %2").arg(table.compress(), fileName);
-					table.dump(optionData, command, true);
-					//this will create the symlink
+					table.dumpData();
 
-					auto dest = table.getPath(Table::currentFolder(), FType::data);
-					hardlink(fileName, dest);
+					auto source = table.getPath(Table::completeFolder(), FType::data);
+					auto dest   = table.getPath(Table::currentFolder(), FType::data);
+					if (table.hasMultipleFile()) {
+						//you can not hardlink folder, so create a folder and iterate
+						hardLinkFolder(source + "*", dest);
+					} else {
+						hardlink(source, dest);
+					}
 				}
 				table.saveResult();
 			} else {
 				//just create the symlink if the source exists (maybe there are not data at all ?
 				auto source = table.getPath(Table::completeFolder(), FType::data);
 				auto dest   = table.getPath(Table::currentFolder(), FType::data);
-				hardlink(source, dest, false);
+				hardlink(source, dest);
 			}
 		}
 	}

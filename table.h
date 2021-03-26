@@ -39,11 +39,6 @@ class Table {
 	//is just easier, as not all table have id -.- as the primary column...
 	bool hasNewData() const;
 
-	/**
-	 * @brief moveOld will move an old backup in a folder named according with the backup date, and remove the symlink
-	 * @return 
-	 */
-	bool moveOld();
 	void annoyingJoin();
 	void innoDbLastUpdate();
 	void saveResult() const;
@@ -63,7 +58,8 @@ class Table {
 
 	uint64_t getCurrentMax() const;
 	bool     hasMultipleFile() const;
-	void     dump(const QString& option, QString saveBlock, bool dataDump = false);
+	void     dump(const QString& option, const QString& saveBlock, const QString& where = QString());
+	void     dumpData();
 
 	QString compress() const;
 	QString suffix() const;
