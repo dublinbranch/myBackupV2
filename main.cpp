@@ -54,8 +54,8 @@ QStringList loadDB() {
 QVector<Table> loadTables() {
 	QVector<Table> tables;
 	db.state.get().NULL_as_EMPTY = true;
-	//Just easier to load in two stages than doig a join on the last row of backupResult
-	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0 AND TABLE_NAME = 'backupResult' ");
+	//Just easier to load in two stages than doing a join on the last row of backupResult
+	auto res = db.query("SELECT * FROM tableBackupView WHERE frequency > 0");
 	for (const auto& row : res) {
 		tables.push_back({row});
 	}
@@ -122,8 +122,8 @@ int main(int argc, char* argv[]) {
 		mkdir(temp.getDbFolder(Table::currentFolder()));
 		mkdir(temp.getDbFolder(Table::completeFolder()));
 
-		auto currentPath  = QSL("> %5/%6.events.sql").arg(Table::currentFolder(), temp.schema);
-		auto completePath = QSL("> %5/%6.events.sql").arg(Table::completeFolder(), temp.schema);
+		auto currentPath  = QSL("> %5/%6.events.sql").arg(temp.getDbFolder(Table::currentFolder()), temp.schema);
+		auto completePath = QSL("> %5/%6.events.sql").arg(temp.getDbFolder(Table::completeFolder()), temp.schema);
 		temp.dump(optionEvents, currentPath);
 		temp.dump(optionEvents, completePath);
 	}
