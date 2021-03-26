@@ -75,6 +75,10 @@ int main(int argc, char* argv[]) {
 	parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
 	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
+	parser.addOption({{"u", "user"}, QSL("Mysql user"), "string"});
+	parser.addOption({{"u", "password"}, QSL("Mysql password"), "string"});
+	parser.addOption({{"p", "port"}, QSL("Mysql port"), "int"});
+	parser.addOption({{"h", "host"}, QSL("Mysql host"), "string"});
 	parser.process(application);
 
 	NanoSpammerConfig c2;
@@ -87,8 +91,10 @@ int main(int argc, char* argv[]) {
 	commonInitialization(&c2);
 
 	DBConf dbConf;
-	dbConf.user = "roy";
-	dbConf.pass = "roy";
+	dbConf.user = parser.require("user").toUtf8();
+	dbConf.pass = parser.require("password").toUtf8();
+	dbConf.port = parser.require("port").toUInt();
+	dbConf.host = parser.require("host").toUtf8();
 	dbConf.setDefaultDB("backupV2");
 
 	db.setConf(dbConf);
