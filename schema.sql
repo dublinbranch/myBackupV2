@@ -1,10 +1,13 @@
--- Adminer 4.7.6 MySQL dump
 
 SET NAMES utf8;
 SET time_zone = '+00:00';
 SET foreign_key_checks = 0;
+SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO';
 
 SET NAMES utf8mb4;
+
+CREATE DATABASE `backupV2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;
+USE `backupV2`;
 
 CREATE TABLE `backupResult` (
   `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -31,9 +34,11 @@ CREATE TABLE `dbBackupOverride` (
   UNIQUE KEY `SCHEMA_NAME` (`SCHEMA_NAME`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+INSERT INTO `dbBackupOverride` (`id`, `SCHEMA_NAME`, `frequency`, `addedOn`, `note`) VALUES
+(1,	'performance_schema',	0,	'2021-03-25 13:03:27',	'internal mysql stuff'),
+(2,	'information_schema',	0,	'2021-03-25 13:03:27',	'internal mysql stuff');
 
 CREATE TABLE `dbBackupView` (`SCHEMA_NAME` varchar(64), `frequency` decimal(4,0), `note` text);
-
 
 CREATE TABLE `tableBackupOverride` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -62,5 +67,3 @@ CREATE ALGORITHM=MERGE DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `dbB
 
 DROP TABLE IF EXISTS `tableBackupView`;
 CREATE ALGORITHM=MERGE DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `tableBackupView` AS select `t`.`TABLE_SCHEMA` AS `TABLE_SCHEMA`,`t`.`TABLE_NAME` AS `TABLE_NAME`,`t`.`TABLE_TYPE` AS `TABLE_TYPE`,`t`.`ENGINE` AS `ENGINE`,`t`.`TABLE_COMMENT` AS `TABLE_COMMENT`,coalesce(`b`.`frequency`,`d`.`frequency`,1) AS `frequency`,`t`.`UPDATE_TIME` AS `lastUpdateTime`,`b`.`incremental` AS `incremental`,coalesce(`b`.`incrementalOn`,0) AS `incrementalOn`,`b`.`compressionProg` AS `compressionProg`,`b`.`compressionOpt` AS `compressionOpt`,`b`.`compressionSuffix` AS `compressionSuffix`,`b`.`path` AS `path`,coalesce(`b`.`fractionSize`,0) AS `fractionSize`,`b`.`note` AS `note` from ((`information_schema`.`TABLES` `t` left join `backupV2`.`tableBackupOverride` `b` on(`t`.`TABLE_NAME` = `b`.`TABLE_NAME` and `t`.`TABLE_SCHEMA` = `b`.`TABLE_SCHEMA`)) left join `backupV2`.`dbBackupOverride` `d` on(`d`.`SCHEMA_NAME` = `t`.`TABLE_SCHEMA`)) where `t`.`TEMPORARY` = 'N' or `t`.`TEMPORARY` is null;
-
--- 2021-03-24 23:05:36

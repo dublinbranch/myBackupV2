@@ -26,18 +26,15 @@ using namespace std;
  * (altrimenti se backup è partito alle 2020 01 01 e 1 minuto e il check lo faccio poi a mezzanotte esatta fallirebbe)
  * 
  * 
- * Peccato che per InnoDB, sia un poco complesso (a dir poco)
+ * Peccato che per InnoDB, sia un poco inaffibabile
  * https://stackoverflow.com/questions/2785429/how-can-i-determine-when-an-innodb-table-was-last-changed
- * 
- * in breve stat del file (ammesso sia attivo a livello dell'os la cosa che salva il last update)
- *  -.-
- * Perché altrimenti è error prone definire una colonna da monitorare, non tutte la tabelle lo hanno ecc ecc, non tutte le tabelle sono append only e mille edge case
+ * Per adesso lavoriamo secondo la logica, se è NULL allora non ci son state modifiche (che è vero), molto più facile, il codice per gestire eventualmente da disco lo stat del file ci sta, ma non è usato
  */
 
 //TODO on the first day of the month, whatever is PRESENT, a full backup is performed ??? (if there are new data of course)
 //So if last update < 1 month, do nothing and save time
 DB        db;
-QString   datadir;
+//QString   datadir;
 QString   backupFolder;
 QDateTime processStartTime   = QDateTime::currentDateTime();
 uint      compressionThreads = thread::hardware_concurrency() / 2;
@@ -72,7 +69,8 @@ int main(int argc, char* argv[]) {
 	QCommandLineParserV2 parser;
 	parser.addHelpOption();
 	parser.addVersionOption();
-	parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
+	
+	//parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
 	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
 	parser.addOption({{"u", "user"}, QSL("Mysql user"), "string"});
@@ -100,7 +98,7 @@ int main(int argc, char* argv[]) {
 	db.setConf(dbConf);
 
 	//TODO verificare sia una cartella di mysql plausibile
-	datadir = parser.require("datadir");
+	//datadir = parser.require("datadir");
 
 	backupFolder       = parser.require("folder");
 	compressionThreads = parser.value("thread").toUInt();

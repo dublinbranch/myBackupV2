@@ -12,7 +12,7 @@
 
 extern DB              db;
 extern const QString   backupFolder;
-extern const QString   datadir;
+//extern const QString   datadir;
 extern const QDateTime processStartTime;
 extern const uint      compressionThreads;
 
@@ -54,19 +54,20 @@ void Table::annoyingJoin() {
 
 void Table::innoDbLastUpdate() {
 	if (isInnoDb) {
-		QString ibdPath;
-		if (path.isEmpty()) {
-			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, name);
-		} else {
-			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, path);
-		}
+		//Mettere una config se usare o meno da disco, per adesso va benissimo usare solo la tabella e considerare se NULL allora nessuna modifica
+		//		QString ibdPath;
+		//		if (path.isEmpty()) {
+		//			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, name);
+		//		} else {
+		//			ibdPath = QSL("%1/%2/%3.ibd").arg(datadir, schema, path);
+		//		}
 
-		QFileInfo info(ibdPath);
-		if (!info.exists()) {
-			//TODO explain that this program has to run as a user in the mysql group
-			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are pointing to the right mysql datadir folder ?").arg(ibdPath, schema, name));
-		}
-		lastUpdateTime = info.lastModified();
+		//		QFileInfo info(ibdPath);
+		//		if (!info.exists()) {
+		//			//TODO explain that this program has to run as a user in the mysql group
+		//			throw ExceptionV2(QSL("Missing file (Or we do not have privileges to read) %1, for table `%2`.`%3`, are you sure you are pointing to the right mysql datadir folder ?").arg(ibdPath, schema, name));
+		//		}
+		//		lastUpdateTime = info.lastModified();
 	}
 }
 
@@ -76,6 +77,10 @@ Table::Table(const sqlRow& row) {
 	row.rq("frequency", frequency);
 	row.rq("fractionSize", fractionSize);
 	row.rq("lastUpdateTime", lastUpdateTime);
+	if (!lastUpdateTime.isValid()) {
+		//see the note in innoDbLastUpdate for why we do thisb
+		lastUpdateTime.setSecsSinceEpoch(0);
+	}
 	row.rq("compressionProg", compressionProg);
 	row.rq("compressionOpt", compressionOpt);
 	row.rq("compressionSuffix", compressionSuffix);
@@ -89,7 +94,7 @@ Table::Table(const sqlRow& row) {
 		isInnoDb = true;
 	}
 	annoyingJoin();
-	innoDbLastUpdate();
+	//innoDbLastUpdate();
 }
 
 Table::Table(QString _schema, QString _name) {
