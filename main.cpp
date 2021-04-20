@@ -74,9 +74,9 @@ int main(int argc, char* argv[]) {
 	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
 	parser.addOption({{"u", "user"}, QSL("Mysql user"), "string"});
-	parser.addOption({{"u", "password"}, QSL("Mysql password"), "string"});
-	parser.addOption({{"p", "port"}, QSL("Mysql port"), "int", "3306"});
-	parser.addOption({{"h", "host"}, QSL("Mysql host"), "string", "127.0.0.1"});
+	parser.addOption({{"p", "password"}, QSL("Mysql password"), "string"});
+	parser.addOption({{"P", "port"}, QSL("Mysql port"), "int", "3306"});
+	parser.addOption({{"H", "host"}, QSL("Mysql host"), "string", "127.0.0.1"});
 	parser.process(application);
 
 	NanoSpammerConfig c2;
