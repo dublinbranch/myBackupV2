@@ -33,7 +33,7 @@ using namespace std;
 
 //TODO on the first day of the month, whatever is PRESENT, a full backup is performed ??? (if there are new data of course)
 //So if last update < 1 month, do nothing and save time
-DB        db;
+DB db;
 //QString   datadir;
 QString   backupFolder;
 QDateTime processStartTime   = QDateTime::currentDateTime();
@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
 	QCommandLineParserV2 parser;
 	parser.addHelpOption();
 	parser.addVersionOption();
-	
+
 	//parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
 	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
@@ -89,10 +89,11 @@ int main(int argc, char* argv[]) {
 	commonInitialization(&c2);
 
 	DBConf dbConf;
-	dbConf.user = parser.require("user").toUtf8();
-	dbConf.pass = parser.require("password").toUtf8();
-	dbConf.port = parser.require("port").toUInt();
-	dbConf.host = parser.require("host").toUtf8();
+	dbConf.user        = parser.require("user").toUtf8();
+	dbConf.pass        = parser.require("password").toUtf8();
+	dbConf.port        = parser.require("port").toUInt();
+	dbConf.host        = parser.require("host").toUtf8();
+	dbConf.writeBinlog = false;
 	dbConf.setDefaultDB("backupV2");
 
 	db.setConf(dbConf);

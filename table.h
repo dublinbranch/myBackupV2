@@ -31,8 +31,9 @@ class Table {
 	uint      frequency    = 0;
 	uint      lastId       = 0;
 
-	bool isView   = false;
-	bool isInnoDb = false;
+	bool isView     = false;
+	bool isInnoDb   = false;
+	bool schemaOnly = false;
 
 	bool isIncremental() const;
 	bool isFractionated() const;

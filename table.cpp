@@ -10,8 +10,8 @@
 #include <QFileInfo>
 #include <QProcess>
 
-extern DB              db;
-extern const QString   backupFolder;
+extern DB            db;
+extern const QString backupFolder;
 //extern const QString   datadir;
 extern const QDateTime processStartTime;
 extern const uint      compressionThreads;
@@ -86,6 +86,8 @@ Table::Table(const sqlRow& row) {
 	row.rq("compressionSuffix", compressionSuffix);
 	row.rq("incremental", incremental);
 	row.rq("incrementalOn", incrementalOn);
+
+	row.rq("schemaOnly", schemaOnly);
 
 	if (row["TABLE_TYPE"] == "view") {
 		isView = true;
