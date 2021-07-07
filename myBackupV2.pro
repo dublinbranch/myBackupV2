@@ -36,7 +36,9 @@ SOURCES += \
         config.cpp \
         main.cpp \
         table.cpp
-
+		
+#This is to run on S7
+#QMAKE_LFLAGS += "-Wl,--dynamic-linker=/srv/gsn/lib514_gsn/ld-linux-x86-64.so.2"
 
 
 include(minMysql/minMysql.pri)
