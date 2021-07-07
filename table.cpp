@@ -94,7 +94,7 @@ QString Table::getPath(QString folder, FType type, bool noSuffix) const {
 	//2020-12-28_22-01/externalAgencies.rtyAssignmentStatusHistory  .data.sql.gz
 	switch (type) {
 	case FType::data: {
-		if (isFractionated()) {
+		if (isFractionated() || isIncremental()) {
 			return base + "/";
 		}
 		base.append(".data.sql");
@@ -142,25 +142,37 @@ void Table::dumpData() {
 	QString saveBlock;
 	if (isFractionated()) {
 		completePath = getPath(Table::completeFolder(), FType::data, true);
-		mkdir(completePath);
+
 		if (isIncremental()) {
 			inProgressIdStart = lastId;
 		} else {
+			//Remove the current data, if any, to avoid remnant of previous partial backup
+			QDir dir(completePath);
+			dir.removeRecursively();
 			inProgressIdStart = 0;
 		}
+
+		mkdir(completePath);
+	} else if (isIncremental()) {
+		completePath = getPath(Table::completeFolder(), FType::data, true);
+		mkdir(completePath);
+	} else {
+		completePath = getPath(Table::completeFolder(), FType::data, false);
 	}
 
 	while (true) {
 		if (isFractionated()) {
 			inProgressIdEnd = std::min(inProgressIdStart + fractionSize, currentMax);
 			where           = QSL(R"(--where="%1 > %2 AND %1 <= %3 ")").arg(incremental).arg(inProgressIdStart).arg(inProgressIdEnd);
-			auto fileName   = QSL("%2/%3_%4_%5.%6").arg(completePath, name).arg(inProgressIdStart).arg(inProgressIdEnd).arg(suffix());
+			auto fileName   = QSL("%2/%3_%4_%5.data.sql.%6").arg(completePath, name).arg(inProgressIdStart).arg(inProgressIdEnd).arg(suffix());
 			saveBlock       = QSL("%1 > %2").arg(compress(), fileName);
 		} else {
-			if (currentMax) {
+			if (currentMax) { //we have an incremental
 				where         = QSL(R"(--where="%1 > %2 AND %1 <= %3 ")").arg(incremental).arg(lastId).arg(currentMax);
-				auto fileName = QSL("%2/%3_%4_%5.%6").arg(completePath, name).arg(lastId).arg(currentMax).arg(suffix());
+				auto fileName = QSL("%2/%3_%4_%5.data.sql.%6").arg(completePath, name).arg(lastId).arg(currentMax).arg(suffix());
 				saveBlock     = QSL("%1 > %2").arg(compress(), fileName);
+			} else { //standard full table dump
+				saveBlock = QSL("%1 > %2").arg(compress(), completePath);
 			}
 		}
 
@@ -179,10 +191,19 @@ void Table::dumpData() {
 void Table::dump(const QString& option, const QString& saveBlock, const QString& where) {
 	QProcess sh;
 
+	QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+	env.remove("LD_LIBRARY_PATH");
+	sh.setProcessEnvironment(env);
+
 	//TODO gestire se si usa il socket ?
 	//We first evaluate the port, as the password can contain %1, use FMT to format the string
-	const QString loginBlock = QSL(" -u %2 -p%3 -h %4 -P %1 ").arg(db.getConf().port).arg(QString(db.getConf().user), QString(db.getConf().pass), QString(db.getConf().host));
-	QString       param      = QSL("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
+	auto const& conf = db.getConf();
+	QString     ssl;
+	if (conf.ssl) {
+		ssl = " --ssl ";
+	}
+	QString loginBlock = QSL("-P %1 -u %2 -p%3 -h %4 %5").arg(conf.port).arg(QString(conf.user), QString(conf.pass), QString(conf.host), ssl);
+	QString param      = QSL("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
 	sh.start("sh", QStringList() << "-c" << param);
 	started = QDateTime::currentDateTimeUtc();
 	sh.waitForFinished(1E9);
@@ -190,7 +211,7 @@ void Table::dump(const QString& option, const QString& saveBlock, const QString&
 	error.append(sh.readAllStandardError());
 	error.append(sh.readAllStandardOutput());
 	if (!error.isEmpty()) {
-		qCritical().noquote() << error;
+		qCritical().noquote() << error.leftRef(2048);
 	}
 	sh.close();
 	completed = QDateTime::currentDateTimeUtc();

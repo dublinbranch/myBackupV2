@@ -12,4 +12,6 @@ const QString optionSchema = " --single-transaction --no-data --opt --skip-add-d
 const QString optionView   = " --single-transaction  --opt --skip-add-drop-table ";
 const QString optionEvents = " --no-create-db --no-create-info --no-data --events --routines --triggers --skip-opt ";
 
+const bool SkipDumpDb          = true;
+const bool SkipDumpTableSChema = true;
 #endif // CONST_H
