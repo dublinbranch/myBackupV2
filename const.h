@@ -6,9 +6,6 @@
 //During development use yyyy-MM-dd_HH-mm so you can have a table for each minute and easily check the operation
 //Under normal condition this program is supposed to run daily so will use yyyy-MM-dd
 const QString folderTimeFormat = "yyyy-MM-dd_HH-mm";
-/*******/
-//todo to be filled based on the actual db login!
-const QString loginBlock = " -u roy -proy ";
 /********/
 const QString optionData   = " --single-transaction --no-create-info --extended-insert --quick --set-charset --skip-add-drop-table ";
 const QString optionSchema = " --single-transaction --no-data --opt --skip-add-drop-table ";

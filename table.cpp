@@ -124,6 +124,9 @@ QString Table::getPath(QString folder, FType type, bool noSuffix) const {
 	case FType::view: {
 		return base + ".view.sql";
 	}
+	default:
+		qCritical() << "invalid type used: " << asString(type) << QStacker16();
+		exit(1);
 	}
 }
 
@@ -189,7 +192,10 @@ void Table::dumpData() {
 void Table::dump(const QString& option, const QString& saveBlock, const QString& where) {
 	QProcess sh;
 
-	QString param = QSL("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
+	//TODO gestire se si usa il socket ?
+	//We first evaluate the port, as the password can contain %1, use FMT to format the string
+	const QString loginBlock = QSL(" -u %2 -p%3 -h %4 -P %1 ").arg(db.getConf().port).arg(QString(db.getConf().user), QString(db.getConf().pass), QString(db.getConf().host));
+	QString       param      = QSL("mysqldump %1 %2 %3 %4 %5 %6").arg(loginBlock, option, schema, name, where, saveBlock);
 	sh.start("sh", QStringList() << "-c" << param);
 	started = QDateTime::currentDateTimeUtc();
 	sh.waitForFinished(1E9);
