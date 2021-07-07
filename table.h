@@ -41,7 +41,6 @@ class Table {
 	bool hasNewData() const;
 
 	void annoyingJoin();
-	void innoDbLastUpdate();
 	void saveResult() const;
 	Table(const sqlRow& row);
 	Table(QString _schema, QString _name);

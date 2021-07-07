@@ -34,7 +34,6 @@ using namespace std;
 //TODO on the first day of the month, whatever is PRESENT, a full backup is performed ??? (if there are new data of course)
 //So if last update < 1 month, do nothing and save time
 DB db;
-//QString   datadir;
 QString   backupFolder;
 QDateTime processStartTime   = QDateTime::currentDateTime();
 uint      compressionThreads = thread::hardware_concurrency() / 2;
@@ -70,7 +69,6 @@ int main(int argc, char* argv[]) {
 	parser.addHelpOption();
 	parser.addVersionOption();
 
-	//parser.addOption({{"d", "datadir"}, "Where the mysql datadir is, needed to know innodb last modification timestamp", "string"});
 	parser.addOption({{"f", "folder"}, "Where to store the backup, please do not change folder whitout resetting the backupResult table first", "string"});
 	parser.addOption({{"t", "thread"}, QSL("How many compression thread to spawn, default %1").arg(compressionThreads), "int", QString::number(compressionThreads)});
 	parser.addOption({{"u", "user"}, QSL("Mysql user"), "string"});
@@ -98,9 +96,6 @@ int main(int argc, char* argv[]) {
 	dbConf.setDefaultDB("backupV2");
 
 	db.setConf(dbConf);
-
-	//TODO verificare sia una cartella di mysql plausibile
-	//datadir = parser.require("datadir");
 
 	backupFolder       = parser.require("folder");
 	compressionThreads = parser.value("thread").toUInt();
