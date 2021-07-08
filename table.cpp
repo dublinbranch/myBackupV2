@@ -158,6 +158,8 @@ void Table::dumpData() {
 		mkdir(completePath);
 	} else {
 		completePath = getPath(Table::completeFolder(), FType::data, false);
+		//Remove the file also we modify also the hardlinked old one
+		QFile::remove(completePath);
 	}
 
 	while (true) {

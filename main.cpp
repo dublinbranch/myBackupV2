@@ -77,6 +77,7 @@ QVector<Table> loadTables(QString& schema, QString& table) {
 	return tables;
 }
 
+//--f /home/claudio/backup --u claudio --p claudio --schema Alberto --table accountName
 int main(int argc, char* argv[]) {
 	StackerMinLevel = "myBackupV2/";
 
@@ -151,6 +152,8 @@ int main(int argc, char* argv[]) {
 	QDir().mkpath(Table::completeFolder());
 	QDir().mkpath(Table::currentFolder());
 
+	// row = database (schema).
+	// dump events of the databases
 	for (auto& row : loadDB(schema)) {
 		Table temp(row, "");
 		mkdir(temp.getDbFolder(Table::currentFolder()));
